@@ -1,0 +1,4 @@
+class AppConstantUtils {
+
+  static const module = "JW9tc0ByZWRsdGQl";
+}

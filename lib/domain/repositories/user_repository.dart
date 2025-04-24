@@ -1,0 +1,11 @@
+
+import '../entities/response/accounting/common_response.dart';
+import '../entities/response/accounting/khat_onujay_list_response.dart';
+
+abstract class UserRepository{
+
+  Future<KhatOnujayListResponse> getKhatOnujayList(String token,String keyword);
+
+  Future<CommonResponse> createIncomeEntry(String token);
+
+}

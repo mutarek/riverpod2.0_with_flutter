@@ -1,0 +1,220 @@
+import 'package:dio/dio.dart';
+
+class CustomInterceptor extends Interceptor {
+  final bool request;
+  final bool requestHeader;
+  final bool requestBody;
+  final bool responseBody;
+  final bool responseHeader;
+  final bool error;
+  static const int initialTab = 1;
+  static const String tabStep = '    ';
+  final bool compact;
+  final int maxWidth;
+  void Function(Object object) logPrint;
+
+  // Color codes
+  static const String reset = '\x1B[0m';
+  static const String orange = '\x1B[38;5;214m';  // Request URL // Request headers // Request body
+  static const String green = '\x1B[32m';  // Request URL  // Response body // Request headers
+  static const String red = '\x1B[38;5;196m';     // Errors
+
+  CustomInterceptor({
+    this.request = true,
+    this.requestHeader = false,
+    this.requestBody = false,
+    this.responseHeader = false,
+    this.responseBody = true,
+    this.error = true,
+    this.maxWidth = 90,
+    this.compact = true,
+    this.logPrint = print,
+  });
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    if (request) {
+      _printRequestUrl(options); // Use blue color for the URL
+    }
+    if (requestHeader) {
+      _printMapAsTable(options.queryParameters, header: 'Query Parameters', color: orange);
+      final requestHeaders = <String, dynamic>{};
+      requestHeaders.addAll(options.headers);
+      requestHeaders['contentType'] = options.contentType?.toString();
+      requestHeaders['responseType'] = options.responseType.toString();
+      requestHeaders['followRedirects'] = options.followRedirects;
+      requestHeaders['connectTimeout'] = options.connectTimeout;
+      requestHeaders['receiveTimeout'] = options.receiveTimeout;
+
+      _printMapAsTable(requestHeaders, header: 'Headers', color: orange);
+      _printMapAsTable(options.extra, header: 'Extras', color: orange);
+      options.headers.addAll(requestHeaders);
+    }
+    if (requestBody && options.method != 'GET') {
+      final dynamic data = options.data;
+      if (data != null) {
+        if (data is Map) _printMapAsTable(data, header: 'Request Body', color: orange);
+        if (data is FormData) {
+          final formDataMap = <String, dynamic>{}
+            ..addEntries(data.fields)
+            ..addEntries(data.files);
+          _printMapAsTable(formDataMap, header: 'Form data | ${data.boundary}', color: orange);
+        } else {
+          _printBlock(data.toString(), color: orange);
+        }
+      }
+    }
+    super.onRequest(options, handler);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    if (error) {
+      if (err.type == DioExceptionType.badResponse) {
+        final uri = err.response?.requestOptions.uri;
+        _printBoxed(
+          header: '${red}DioError ║ Status: ${err.response?.statusCode} ${err.response?.statusMessage}$reset',
+          text: '$red$uri$reset',
+        );
+        if (err.response != null && err.response?.data != null) {
+          _printResponse(err.response!, color: red);
+        }
+        _printLine('╚');
+        logPrint('');
+      } else {
+        _printBoxed(header: '${red}DioError ║ ${err.type}$reset', text: err.message);
+      }
+    }
+    super.onError(err, handler);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    _printResponseHeader(response);
+    if (responseHeader) {
+      final responseHeaders = <String, String>{};
+      response.headers.forEach((k, list) => responseHeaders[k] = list.toString());
+      _printMapAsTable(responseHeaders, header: 'Headers', color: green);
+    }
+
+    if (responseBody) {
+      logPrint('╔ Body');
+      logPrint('║');
+      _printResponse(response, color: green);
+      logPrint('║');
+      _printLine('╚');
+    }
+
+    if (!(response.realUri.toString().contains("https://api.telegram.org/"))) {
+    }
+    super.onResponse(response, handler);
+  }
+
+  void _printRequestUrl(RequestOptions options) {
+    final uri = options.uri;
+    final method = options.method;
+    _printBoxed(header: '${orange}Request ║ $method $reset', text: '$orange$uri$reset');
+  }
+
+  void _printBoxed({String? header, String? text}) {
+    logPrint('');
+    logPrint('╔╣ $header');
+    logPrint('║  $text');
+    _printLine('╚');
+  }
+
+  void _printResponse(Response response, {String color = ''}) {
+    if (response.data != null) {
+      if (response.data is Map) {
+        _printPrettyMap(response.data as Map, color: color);
+      } else if (response.data is List) {
+        logPrint('${color}║${_indent()}[$reset');
+        _printList(response.data as List, color: color);
+        logPrint('${color}║${_indent()}]$reset');
+      } else {
+        _printBlock(response.data.toString(), color: color);
+      }
+    }
+  }
+
+  void _printResponseHeader(Response response) {
+    final uri = response.requestOptions.uri;
+    final method = response.requestOptions.method;
+    _printBoxed(
+      header: '${green}Response ║ $method ║ Status: ${response.statusCode} ${response.statusMessage}$reset',
+      text: '$green$uri$reset',
+    );
+  }
+
+  void _printLine([String pre = '', String suf = '╝']) => logPrint('$pre${'═' * maxWidth}$suf');
+
+  void _printKV(String? key, Object? value, {String color = ''}) {
+    final pre = '$color╟ $key: $reset';
+    final msg = '$color$value$reset';
+
+    if (pre.length + msg.length > maxWidth) {
+      logPrint(pre);
+      _printBlock(msg, color: color);
+    } else {
+      logPrint('$pre$msg');
+    }
+  }
+
+  void _printBlock(String msg, {String color = ''}) {
+    final lines = (msg.length / maxWidth).ceil();
+    for (var i = 0; i < lines; ++i) {
+      logPrint('$color${msg.substring(i * maxWidth, math.min<int>(i * maxWidth + maxWidth, msg.length))}$reset');
+    }
+  }
+
+  String _indent([int tabCount = initialTab]) => tabStep * tabCount;
+
+  void _printPrettyMap(
+      Map data, {
+        int tabs = initialTab,
+        bool isListItem = false,
+        bool isLast = false,
+        String color = '',
+      }) {
+    var _tabs = tabs;
+    final isRoot = _tabs == initialTab;
+    final initialIndent = _indent(_tabs);
+    _tabs++;
+
+    if (isRoot || isListItem) logPrint('${color}║$initialIndent{$reset');
+
+    data.keys.toList().asMap().forEach((index, dynamic key) {
+      final isLast = index == data.length - 1;
+      dynamic value = data[key];
+      if (value is String) {
+        value = '"${value.toString().replaceAll(RegExp(r'(\r|\n)+'), " ")}"';
+      }
+      if (value is Map) {
+        logPrint('${color}║${_indent(_tabs)} $key: {$reset');
+        _printPrettyMap(value, tabs: _tabs, color: color);
+      } else if (value is List) {
+        logPrint('${color}║${_indent(_tabs)} $key: [$reset');
+        _printList(value, tabs: _tabs, color: color);
+        logPrint('${color}║${_indent(_tabs)} ]${isLast ? '' : ','}$reset');
+      } else {
+        logPrint('${color}║${_indent(_tabs)} $key: $value${!isLast ? ',' : ''}$reset');
+      }
+    });
+
+    logPrint('${color}║$initialIndent}${isListItem && !isLast ? ',' : ''}$reset');
+  }
+
+  void _printList(List list, {int tabs = initialTab, String color = ''}) {
+    list.asMap().forEach((i, dynamic e) {
+      final isLast = i == list.length - 1;
+      logPrint('${color}║${_indent(tabs + 2)} $e${isLast ? '' : ','}$reset');
+    });
+  }
+
+  void _printMapAsTable(Map? map, {String? header, String color = ''}) {
+    if (map == null || map.isEmpty) return;
+    logPrint('${color}╔ $header $reset');
+    map.forEach((dynamic key, dynamic value) => _printKV(key.toString(), value, color: color));
+    _printLine('╚');
+  }
+}
